@@ -49,12 +49,7 @@ screen_fill(Uint8 *layer, int color)
 void
 screen_rect(Uint8 *layer, Uint16 x1, Uint16 y1, Uint16 x2, Uint16 y2, int color)
 {
-	int row, x, y, w, h;
-	if(!x1 && !y1) {
-		screen_fill(layer, color);
-		return;
-	}
-	w = uxn_screen.width, h = uxn_screen.height;
+	int row, x, y, w = uxn_screen.width, h = uxn_screen.height;
 	for(y = y1; y < y2 && y < h; y++)
 		for(x = x1, row = y * w; x < x2 && x < w; x++)
 			layer[x + row] = color;
@@ -125,16 +120,16 @@ screen_debugger(Uxn *u)
 	int i;
 	for(i = 0; i < 0x08; i++) {
 		Uint8 pos = u->wst.ptr - 4 + i;
-		Uint8 color = i > 4 ? 0x01 : !pos ? 0xc :
-			i == 4                        ? 0x8 :
-                                            0x2;
+		Uint8 color = i > 4 ? 0x01 : !pos ? 0xc
+			: i == 4                      ? 0x8
+										  : 0x2;
 		draw_byte(u->wst.dat[pos], i * 0x18 + 0x8, uxn_screen.height - 0x18, color);
 	}
 	for(i = 0; i < 0x08; i++) {
 		Uint8 pos = u->rst.ptr - 4 + i;
-		Uint8 color = i > 4 ? 0x01 : !pos ? 0xc :
-			i == 4                        ? 0x8 :
-                                            0x2;
+		Uint8 color = i > 4 ? 0x01 : !pos ? 0xc
+			: i == 4                      ? 0x8
+										  : 0x2;
 		draw_byte(u->rst.dat[pos], i * 0x18 + 0x8, uxn_screen.height - 0x10, color);
 	}
 	screen_1bpp(uxn_screen.fg, &arrow[0], 0x68, uxn_screen.height - 0x20, 3, 1, 1);
@@ -240,7 +235,10 @@ screen_deo(Uint8 *ram, Uint8 *d, Uint8 port)
 			Uint16 x2 = uxn_screen.width, y2 = uxn_screen.height;
 			if(ctrl & 0x10) x2 = x, x = 0;
 			if(ctrl & 0x20) y2 = y, y = 0;
-			screen_rect(layer, x, y, x2, y2, color);
+			if(!x && !y && x2 == uxn_screen.width && y2 == uxn_screen.height)
+				screen_fill(layer, color);
+			else
+				screen_rect(layer, x, y, x2, y2, color);
 			screen_change(x, y, x2, y2);
 		}
 		/* pixel mode */
