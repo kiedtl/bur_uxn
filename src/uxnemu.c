@@ -177,7 +177,7 @@ set_window_size(SDL_Window *window, int w, int h)
 	SDL_SetWindowSize(window, w, h);
 }
 
-static void
+void
 set_zoom(Uint8 z, int win)
 {
 	if(z >= 1) {
@@ -221,7 +221,7 @@ emu_redraw(Uxn *u)
 	SDL_RenderPresent(emu_renderer);
 }
 
-static int
+int
 emu_init(void)
 {
 	SDL_AudioSpec as;
@@ -448,7 +448,7 @@ handle_events(Uxn *u)
 	return 1;
 }
 
-static int
+int
 emu_run(Uxn *u, char *rom)
 {
 	Uint64 next_refresh = 0;
@@ -488,7 +488,7 @@ emu_run(Uxn *u, char *rom)
 	}
 }
 
-static int
+int
 emu_end(Uxn *u)
 {
 	free(u->ram);
@@ -503,7 +503,7 @@ emu_end(Uxn *u)
 }
 
 int
-main(int argc, char **argv)
+c_main(int argc, char **argv)
 {
 	Uxn u = {0};
 	int i = 1;

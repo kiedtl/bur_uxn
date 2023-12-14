@@ -46,3 +46,4 @@ extern Uint16 dev_vers[0x10], dei_mask[0x10], deo_mask[0x10];
 /* built-ins */
 
 int uxn_eval(Uxn *u, Uint16 pc);
+Uint16 uxn_eval_once(Uxn *u, Uint16 pc);
