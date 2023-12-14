@@ -111,7 +111,7 @@ emu_dei(Uxn *u, Uint8 addr)
 }
 
 void
-emu_deo(Uxn *u, Uint8 addr)
+base_emu_deo(Uxn *u, Uint8 addr)
 {
 	Uint8 p = addr & 0x0f, d = addr & 0xf0;
 	switch(d) {
@@ -491,7 +491,7 @@ emu_run(Uxn *u, char *rom)
 int
 emu_end(Uxn *u)
 {
-	free(u->ram);
+	//free(u->ram);
 #ifdef _WIN32
 #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
 	TerminateThread((HANDLE)SDL_GetThreadID(stdin_thread), 0);
