@@ -37,7 +37,7 @@ WITH REGARD TO THIS SOFTWARE.
 #define SHIFT(y)  { r = s->ptr + y; if(r > 254) HALT(2) ptr = s->dat + r - 1; s->ptr = r; }
 
 Uint16
-uxn_eval_once(Uxn *u, Uint16 pc)
+uxn_step(Uxn *u, Uint16 pc)
 {
 	int t, n, l, r;
 	Uint8 *ram = u->ram;
@@ -119,14 +119,4 @@ uxn_eval_once(Uxn *u, Uint16 pc)
 	}
 
 	return pc;
-}
-
-int
-uxn_eval(Uxn *u, Uint16 pc)
-{
-	if(!pc || u->dev[0x0f]) return 0;
-	for(;;) {
-		pc = uxn_eval_once(u, pc);
-		if (pc <= 1) return pc;
-	}
 }

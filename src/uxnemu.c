@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
@@ -17,6 +18,7 @@
 #include "devices/controller.h"
 #include "devices/mouse.h"
 #include "devices/datetime.h"
+#include "devices/net.h"
 #if defined(_WIN32) && defined(_WIN32_WINNT) && _WIN32_WINNT > 0x0602
 #include <processthreadsapi.h>
 #elif defined(_WIN32)
@@ -55,15 +57,15 @@ static SDL_Thread *stdin_thread;
 
 /* devices */
 
-static int window_created = 0;
+int window_created = 0;
+
 static Uint32 stdin_event, audio0_event, zoom = 1;
 static Uint64 exec_deadline, deadline_interval, ms_interval;
 
 static int
 clamp(int v, int min, int max)
 {
-	return v < min ? min : v > max ? max
-								   : v;
+	return v < min ? min : v > max ? max : v;
 }
 
 static Uint8
@@ -106,6 +108,7 @@ emu_dei(Uxn *u, Uint8 addr)
 	case 0x50: return audio_dei(2, &u->dev[d], p);
 	case 0x60: return audio_dei(3, &u->dev[d], p);
 	case 0xc0: return datetime_dei(u, addr);
+	case 0xd0: return net_dei(u, addr);
 	}
 	return u->dev[addr];
 }
@@ -128,6 +131,7 @@ base_emu_deo(Uxn *u, Uint8 addr)
 	case 0x60: audio_deo(3, &u->dev[d], p, u); break;
 	case 0xa0: file_deo(0, u->ram, &u->dev[d], p); break;
 	case 0xb0: file_deo(1, u->ram, &u->dev[d], p); break;
+	case 0xd0: net_deo(u, p); break;
 	}
 }
 
@@ -222,7 +226,7 @@ emu_redraw(Uxn *u)
 }
 
 int
-emu_init(void)
+emu_init_graphical(void)
 {
 	SDL_AudioSpec as;
 	SDL_zero(as);
@@ -449,49 +453,51 @@ handle_events(Uxn *u)
 }
 
 int
-emu_run(Uxn *u, char *rom)
+emu_run_graphical(Uxn *u)
 {
 	Uint64 next_refresh = 0;
 	Uint64 frame_interval = SDL_GetPerformanceFrequency() / 60;
 	Uint8 *vector_addr = &u->dev[0x20];
+
+	assert(!window_created);
 	window_created = 1;
-	emu_window = SDL_CreateWindow(rom, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, (uxn_screen.width + PAD2) * zoom, (uxn_screen.height + PAD2) * zoom, SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI);
+	emu_window = SDL_CreateWindow("Uxn", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, (uxn_screen.width + PAD2) * zoom, (uxn_screen.height + PAD2) * zoom, SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI);
 	if(emu_window == NULL)
 		return system_error("sdl_window", SDL_GetError());
 	emu_renderer = SDL_CreateRenderer(emu_window, -1, SDL_RENDERER_ACCELERATED);
 	if(emu_renderer == NULL)
 		return system_error("sdl_renderer", SDL_GetError());
 	emu_resize(uxn_screen.width, uxn_screen.height);
-	/* game loop */
-	for(;;) {
+
+	while ("uxn is fun") {
 		Uint16 screen_vector;
 		Uint64 now = SDL_GetPerformanceCounter();
 		/* .System/halt */
-		if(u->dev[0x0f])
+		if (u->dev[0x0f])
 			return system_error("Run", "Ended.");
 		exec_deadline = now + deadline_interval;
-		if(!handle_events(u))
+		if (!handle_events(u))
 			return 0;
 		screen_vector = PEEK2(vector_addr);
-		if(now >= next_refresh) {
+		if (now >= next_refresh) {
 			now = SDL_GetPerformanceCounter();
 			next_refresh = now + frame_interval;
 			uxn_eval(u, screen_vector);
-			if(uxn_screen.x2)
+			if(screen_changed()) //uxn_screen.x2)
 				emu_redraw(u);
 		}
-		if(screen_vector || uxn_screen.x2) {
+		if (screen_vector) {
 			Uint64 delay_ms = (next_refresh - now) / ms_interval;
 			if(delay_ms > 0) SDL_Delay(delay_ms);
-		} else
+		} else {
 			SDL_WaitEvent(NULL);
+		}
 	}
 }
 
 int
-emu_end(Uxn *u)
+emu_end_graphical(Uxn *u)
 {
-	//free(u->ram);
 #ifdef _WIN32
 #pragma GCC diagnostic ignored "-Wint-to-pointer-cast"
 	TerminateThread((HANDLE)SDL_GetThreadID(stdin_thread), 0);
@@ -502,40 +508,18 @@ emu_end(Uxn *u)
 	return u->dev[0x0f] & 0x7f;
 }
 
-int
-c_main(int argc, char **argv)
+void
+emu_run_plain(Uxn *u)
 {
-	Uxn u = {0};
-	int i = 1;
-	if(i == argc)
-		return system_error("usage", "uxnemu [-v][-2x][-3x] file.rom [args...]");
-	/* Connect Varvara */
-	system_connect(0x0, SYSTEM_VERSION, SYSTEM_DEIMASK, SYSTEM_DEOMASK);
-	system_connect(0x1, CONSOLE_VERSION, CONSOLE_DEIMASK, CONSOLE_DEOMASK);
-	system_connect(0x2, SCREEN_VERSION, SCREEN_DEIMASK, SCREEN_DEOMASK);
-	system_connect(0x3, AUDIO_VERSION, AUDIO_DEIMASK, AUDIO_DEOMASK);
-	system_connect(0x4, AUDIO_VERSION, AUDIO_DEIMASK, AUDIO_DEOMASK);
-	system_connect(0x5, AUDIO_VERSION, AUDIO_DEIMASK, AUDIO_DEOMASK);
-	system_connect(0x6, AUDIO_VERSION, AUDIO_DEIMASK, AUDIO_DEOMASK);
-	system_connect(0x8, CONTROL_VERSION, CONTROL_DEIMASK, CONTROL_DEOMASK);
-	system_connect(0x9, MOUSE_VERSION, MOUSE_DEIMASK, MOUSE_DEOMASK);
-	system_connect(0xa, FILE_VERSION, FILE_DEIMASK, FILE_DEOMASK);
-	system_connect(0xb, FILE_VERSION, FILE_DEIMASK, FILE_DEOMASK);
-	system_connect(0xc, DATETIME_VERSION, DATETIME_DEIMASK, DATETIME_DEOMASK);
-	/* Read flags */
-	if(argv[i][0] == '-' && argv[i][1] == 'v')
-		return system_version("Uxnemu - Graphical Varvara Emulator", "30 Aug 2023");
-	if(strcmp(argv[i], "-2x") == 0 || strcmp(argv[i], "-3x") == 0)
-		set_zoom(argv[i++][1] - '0', 0);
-	if(!emu_init())
-		return system_error("Init", "Failed to initialize varvara.");
-	if(!system_init(&u, (Uint8 *)calloc(0x10000 * RAM_PAGES, sizeof(Uint8)), argv[i++]))
-		return system_error("Init", "Failed to initialize uxn.");
-	/* Game Loop */
-	u.dev[0x17] = argc - i;
-	if(uxn_eval(&u, PAGE_PROGRAM)) {
-		console_listen(&u, i, argc, argv);
-		emu_run(&u, boot_rom);
+	while(!u->dev[0x0f]) {
+		int c = fgetc(stdin);
+		if(c == EOF) break;
+		console_input(u, (Uint8)c, CONSOLE_STD);
 	}
-	return emu_end(&u);
+}
+
+int
+emu_end_plain(Uxn *u)
+{
+	return u->dev[0x0f] & 0x7f;
 }

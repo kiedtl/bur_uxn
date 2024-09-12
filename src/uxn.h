@@ -35,15 +35,19 @@ typedef struct Uxn {
 	Stack wst, rst;
 } Uxn;
 
+extern int window_created;
+
 /* required functions */
 
+extern int emu_screen_init();
+extern Uint16 emu_eval(Uxn *u, Uint16 pc);
 extern Uint8 emu_dei(Uxn *u, Uint8 addr);
 extern void emu_deo(Uxn *u, Uint8 addr);
 extern int emu_halt(Uxn *u, Uint8 instr, Uint8 err, Uint16 addr);
 extern Uint8 dei_masks[0x100], deo_masks[0x100];
 extern Uint16 dev_vers[0x10], dei_mask[0x10], deo_mask[0x10];
+extern int uxn_eval(Uxn *u, Uint16 pc);
 
 /* built-ins */
 
-int uxn_eval(Uxn *u, Uint16 pc);
-Uint16 uxn_eval_once(Uxn *u, Uint16 pc);
+Uint16 uxn_step(Uxn *u, Uint16 pc);
