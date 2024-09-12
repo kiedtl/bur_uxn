@@ -177,8 +177,9 @@ set_window_size(SDL_Window *window, int w, int h)
 	SDL_GetWindowSize(window, &win_old.x, &win_old.y);
 	if(w == win_old.x && h == win_old.y) return;
 	SDL_RenderClear(emu_renderer);
-	/* SDL_SetWindowPosition(window, (win.x + win_old.x / 2) - w / 2, (win.y + win_old.y / 2) - h / 2); */
 	SDL_SetWindowSize(window, w, h);
+	screen_change(0, 0, uxn_screen.width, uxn_screen.height);
+	screen_resize(uxn_screen.width, uxn_screen.height);
 }
 
 void
@@ -254,7 +255,33 @@ emu_init_graphical(void)
 	ms_interval = SDL_GetPerformanceFrequency() / 1000;
 	deadline_interval = ms_interval * TIMEOUT_MS;
 	exec_deadline = SDL_GetPerformanceCounter() + deadline_interval;
+	screen_change(0, 0, WIDTH, HEIGHT);
 	screen_resize(WIDTH, HEIGHT);
+	SDL_PauseAudioDevice(audio_id, 1);
+
+	assert(!window_created);
+	window_created = 1;
+
+	emu_window = SDL_CreateWindow(
+		"Tirion Varvara Emulator",
+		SDL_WINDOWPOS_UNDEFINED,
+		SDL_WINDOWPOS_UNDEFINED,
+		(uxn_screen.width + PAD2) * zoom,
+		(uxn_screen.height + PAD2) * zoom,
+		SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI
+	);
+	if (emu_window == NULL)
+		return system_error("sdl_window", SDL_GetError());
+
+	emu_renderer = SDL_CreateRenderer(emu_window, -1, SDL_RENDERER_ACCELERATED);
+	if (emu_renderer == NULL)
+		return system_error("sdl_renderer", SDL_GetError());
+	SDL_RenderClear(emu_renderer);
+	SDL_RenderCopy(emu_renderer, emu_texture, NULL, &emu_viewport);
+	SDL_RenderPresent(emu_renderer);
+
+	emu_resize(uxn_screen.width, uxn_screen.height);
+
 	return 1;
 }
 
@@ -458,16 +485,6 @@ emu_run_graphical(Uxn *u)
 	Uint64 next_refresh = 0;
 	Uint64 frame_interval = SDL_GetPerformanceFrequency() / 60;
 	Uint8 *vector_addr = &u->dev[0x20];
-
-	assert(!window_created);
-	window_created = 1;
-	emu_window = SDL_CreateWindow("Uxn", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, (uxn_screen.width + PAD2) * zoom, (uxn_screen.height + PAD2) * zoom, SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI);
-	if(emu_window == NULL)
-		return system_error("sdl_window", SDL_GetError());
-	emu_renderer = SDL_CreateRenderer(emu_window, -1, SDL_RENDERER_ACCELERATED);
-	if(emu_renderer == NULL)
-		return system_error("sdl_renderer", SDL_GetError());
-	emu_resize(uxn_screen.width, uxn_screen.height);
 
 	while ("uxn is fun") {
 		Uint16 screen_vector;
