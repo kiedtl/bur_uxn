@@ -9,7 +9,7 @@
 // d8: ^^
 // d9: recv
 // da: ^^
-// db:
+// db: close
 // dc:
 // dd:
 // de:
@@ -29,9 +29,7 @@
 #include "../uxn.h"
 #include "net.h"
 
-/* TODO: cleanup with tls_free()
- */
-
+int connections[16] = {0};
 struct tls *client[16] = {0};
 Uint8 current = 0;
 Uint8 status = 0;
@@ -89,8 +87,10 @@ conn_conn(char *host, Uint16 port)
 	char port_str[6] = {0}; // 6 = 65535 (5 chars) + nul
 	sprintf((char *)&port_str, "%hd", port);
 
+	/* printf("connecting to '%s' on port '%s'\n", host, (char *)&port_str); */
 	if (getaddrinfo(host, (char *)&port_str, &hints, &res) != 0) {
 		status = NET_ERR_RESOLVE;
+		/* printf("couldn't resolve\n"); */
 		return; /* failed to resolve */
 	}
 
@@ -105,21 +105,39 @@ conn_conn(char *host, Uint16 port)
 	freeaddrinfo(res);
 
 	if (r == NULL) {
+		/* printf("connection error\n"); */
 		status = NET_ERR_CONNECT;
 		return; /* can't connect */
 	}
 
 	if (tls_connect_socket(client[current], fd, host) != 0) {
+		/* printf("tls upgrade error\n"); */
 		status = NET_ERR_TLS_UPGRADE;
 		return; /* tls: socket upgrade failed */
 	}
 
 	if (tls_handshake(client[current]) != 0) {
+		/* printf("tls handshake error: %s\n", tls_error(client[current])); */
 		status = NET_ERR_TLS_HANDSHAKE;
 		return; /* tls: handshake failed */
 	}
 
+	/* printf("all good\n"); */
 	status = NET_OK;
+	connections[current] = fd;
+}
+
+static void
+conn_done()
+{
+	if (client[current] == NULL) {
+		status = NET_ERR_NOT_INITED;
+		return;
+	}
+	tls_close(client[current]);
+	close(connections[current]);
+	tls_free(client[current]);
+	client[current] = NULL;
 }
 
 static void
@@ -218,6 +236,8 @@ net_deo(Uxn *u, Uint8 addr)
 	} break; case 0xa: {
 		Uint16 addr = PEEK2(&u->dev[0xd9]);
 		conn_recv(&u->ram[addr], length);
+	} break; case 0xb: {
+		conn_done();
 	} break;
 	}
 }
