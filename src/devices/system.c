@@ -197,6 +197,7 @@ emu_halt(Uxn *u, Uint8 instr, Uint8 err, Uint16 addr)
 	} else {
 		system_inspect(u);
 		fprintf(stderr, "%s %s, by %02x at 0x%04x.\n", (instr & 0x40) ? "Return-stack" : "Working-stack", errors[err - 1], instr, addr);
+		emu_trace(u);
 	}
 	return 0;
 }
