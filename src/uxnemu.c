@@ -263,7 +263,7 @@ emu_init_graphical(void)
 	window_created = 1;
 
 	emu_window = SDL_CreateWindow(
-		"Tirion Varvara Emulator",
+		"Formenos Varvara Emulator",
 		SDL_WINDOWPOS_UNDEFINED,
 		SDL_WINDOWPOS_UNDEFINED,
 		(uxn_screen.width + PAD2) * zoom,
