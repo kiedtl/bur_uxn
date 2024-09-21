@@ -29,14 +29,25 @@
 #include "../uxn.h"
 #include "net.h"
 
-int connections[16] = {0};
-struct tls *client[16] = {0};
+typedef struct Connection {
+	int fd;
+	struct tls *tls;
+	_Bool is_secure;
+} conn_t;
+
 Uint8 current = 0;
 Uint8 status = 0;
 Uint16 length = 0;
+conn_t connections[16] = {0};
 
 static _Bool
-conn_init(void)
+conn_active(conn_t *c)
+{
+	return (c->is_secure && c->tls != NULL) || (c->fd != 0);
+}
+
+static _Bool
+conn_tls_init(conn_t *c)
 {
 	struct tls_config *tlscfg = tls_config_new();
 	if (!tlscfg) {
@@ -52,13 +63,13 @@ conn_init(void)
 	/* FIXME: right way to allow self-signed certs? */
 	tls_config_insecure_noverifycert(tlscfg);
 
-	client[current] = tls_client();
+	c->tls = tls_client();
 	if (!tlscfg) {
 		status = NET_ERR_TLS_INIT;
 		return false; /* tls_client error */
 	}
 
-	if (tls_configure(client[current], tlscfg) != 0) {
+	if (tls_configure(c->tls, tlscfg) != 0) {
 		status = NET_ERR_TLS_CONFIGURE;
 		return false; /* tls_configure error */
 	}
@@ -70,11 +81,12 @@ conn_init(void)
 }
 
 static void
-conn_conn(char *host, Uint16 port)
+conn_conn(conn_t *c, _Bool is_secure, char *host, Uint16 port)
 {
-	if (client[current] == NULL)
-		if (!conn_init())
+	if (!conn_active(c))
+		if (!conn_tls_init(c))
 			return;
+	c->is_secure = is_secure;
 
 	struct addrinfo hints = {
 		.ai_protocol = IPPROTO_TCP,
@@ -110,57 +122,61 @@ conn_conn(char *host, Uint16 port)
 		return; /* can't connect */
 	}
 
-	if (tls_connect_socket(client[current], fd, host) != 0) {
-		/* printf("tls upgrade error\n"); */
-		status = NET_ERR_TLS_UPGRADE;
-		return; /* tls: socket upgrade failed */
-	}
+	if (c->is_secure) {
+		if (tls_connect_socket(c->tls, fd, host) != 0) {
+			/* printf("tls upgrade error\n"); */
+			status = NET_ERR_TLS_UPGRADE;
+			return; /* tls: socket upgrade failed */
+		}
 
-	if (tls_handshake(client[current]) != 0) {
-		/* printf("tls handshake error: %s\n", tls_error(client[current])); */
-		status = NET_ERR_TLS_HANDSHAKE;
-		return; /* tls: handshake failed */
+		if (tls_handshake(c->tls) != 0) {
+			/* printf("tls handshake error: %s\n", tls_error(client[current])); */
+			status = NET_ERR_TLS_HANDSHAKE;
+			return; /* tls: handshake failed */
+		}
 	}
 
 	/* printf("all good\n"); */
 	status = NET_OK;
-	connections[current] = fd;
+	c->fd = fd;
 }
 
 static void
-conn_done()
+conn_done(conn_t *c)
 {
-	if (client[current] == NULL) {
+	if (!conn_active(c)) {
 		status = NET_ERR_NOT_INITED;
 		return;
 	}
-	tls_close(client[current]);
-	close(connections[current]);
-	tls_free(client[current]);
-	client[current] = NULL;
+
+	if (c->is_secure) tls_close(c->tls);
+	close(c->fd);
+	if (c->is_secure) tls_free(c->tls);
+
+	c->fd = 0;
+	c->tls = NULL;
+	c->is_secure = false;
 }
 
 static void
-conn_recv(Uint8 *bufsrv, Uint16 sz)
+conn_recv(conn_t *c, Uint8 *bufsrv, Uint16 sz)
 {
-	if (client[current] == NULL) {
+	if (!conn_active(c)) {
 		length = 0;
 		status = NET_ERR_NOT_INITED;
 		return;
 	}
 
-	ssize_t r = tls_read(client[current], bufsrv, sz);
+	ssize_t r = c->is_secure ? tls_read(c->tls, bufsrv, sz) : read(c->fd, bufsrv, sz);
 
-	if (r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
-		/* should never happen -- would always be fault of emulator
-		 */
-		fprintf(stderr, "/dev/sda is on fire\n");
+	if (c->is_secure && r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
 		length = 0;
-		status = NET_ERR_UNKNOWN;
+		status = NET_OK_RETRY;
 		return;
 	} else if (r < 0) {
-		if (errno != EINTR) {
-			fprintf(stderr, "DEVICE(net): tls error: %s\n", tls_error(client[current]));
+		if (errno != EINTR) { /* FIXME: not sure if errno is valid when tls is active? */
+			char *e = c->is_secure ? tls_error(c->tls) : strerror(errno);
+			fprintf(stderr, "DEVICE(net): tls error: %s\n", e);
 			length = 0;
 			status = NET_ERR_SYSTEM;
 			return;
@@ -177,9 +193,9 @@ conn_recv(Uint8 *bufsrv, Uint16 sz)
 }
 
 static void
-conn_send(Uint8 *data, Uint16 len)
+conn_send(conn_t *c, Uint8 *data, Uint16 len)
 {
-	if (client[current] == NULL) {
+	if (!conn_active(c)) {
 		status = NET_ERR_NOT_INITED;
 		return;
 	}
@@ -187,13 +203,13 @@ conn_send(Uint8 *data, Uint16 len)
 	while (len) {
 		ssize_t r = -1;
 
-		r = tls_write(client[current], data, len);
+		if (c->is_secure)
+			r = tls_write(c->tls, data, len);
+		else
+			r = send(c->fd, data, len, 0);
 
-		if (r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
-			/* should never happen -- would always be fault of emulator
-			 */
-			fprintf(stderr, "/dev/sda is on fire\n");
-			status = NET_ERR_UNKNOWN;
+		if (c->is_secure && r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
+			status = NET_OK_RETRY;
 			continue;
 		} else if (r < 0) {
 			status = NET_ERR_SYSTEM;
@@ -221,23 +237,26 @@ net_dei(Uxn *u, Uint8 addr)
 void
 net_deo(Uxn *u, Uint8 addr)
 {
+	conn_t *c = &connections[current];
+
 	switch (addr) {
 	break; case 0x4: {
 		length = PEEK2(&u->dev[0xd3]);
 	} break; case 0x6: {
 		Uint16 addr = PEEK2(&u->dev[0xd5]);
-		Uint8 tls = PEEK2(&u->ram[addr]); // TODO
+		Uint8 use_tls = PEEK2(&u->ram[addr]);
 		Uint16 port = PEEK2(&u->ram[addr + 1]);
 		Uint16 host_addr = PEEK2(&u->ram[addr + 3]);
-		conn_conn((char *)&u->ram[host_addr], port);
+		char *host = (char *)&u->ram[host_addr];
+		conn_conn(c, use_tls, host, port);
 	} break; case 0x8: {
 		Uint16 addr = PEEK2(&u->dev[0xd7]);
-		conn_send(&u->ram[addr], length);
+		conn_send(c, &u->ram[addr], length);
 	} break; case 0xa: {
 		Uint16 addr = PEEK2(&u->dev[0xd9]);
-		conn_recv(&u->ram[addr], length);
+		conn_recv(c, &u->ram[addr], length);
 	} break; case 0xb: {
-		conn_done();
+		conn_done(c);
 	} break;
 	}
 }
